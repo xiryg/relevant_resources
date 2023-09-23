@@ -1,1 +1,102 @@
-python源码
+import logging
+from bs4 import BeautifulSoup
+from tqdm import tqdm
+import pandas as pd
+import csv
+import re
+import requests
+import sys
+
+# 设置日志记录
+logging.basicConfig(filename='program.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 创建Session对象
+session = requests.Session()
+session.headers = {
+    "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/117.0.0.0 Mobile Safari/537.36 Edg/117.0.2045.31"
+}
+
+# 正则表达式
+pattern1 = r'导演: (.*?)\s'  # 用于匹配 导演
+pattern2 = r'主演: (.*?)\.\.\.'  # 用于匹配 演员
+pattern3 = r'(\d+)'  # 用于匹配 上映年份
+pattern4 = r'/\s*([\u4e00-\u9fa5\s]+)\s*/'  # 用于匹配 制片国家
+pattern5 = r'/(?P<genre>[^/\n]+)'  # 用于匹配 类型
+
+# 获取Top250电影的相关信息
+movies = []
+with tqdm(total=10) as pbar:
+    for start in range(0, 250 + 1, 25):
+        url = f"https://movie.douban.com/top250?start={start}&filter="
+        try:
+            response = session.get(url)
+            response.raise_for_status()  # 检查请求是否成功
+            html = response.text
+
+            soup = BeautifulSoup(html, 'lxml')
+
+            for i, item in enumerate(soup.find_all('div', class_='info')):
+                # 获取电影名称
+                name = item.find('span', class_='title').text.strip()
+
+                # 获取评分数据
+                rating = item.find('span', class_='rating_num').text.strip()
+
+                # 获取评语
+                inq = item.find('span', class_='inq').text.strip() if item.find('span', class_='inq') else "无"
+
+                item_o = item.p.text
+                # 获取导演
+                director_match = re.search(pattern1, item_o)
+                director = director_match.group(1) if director_match else '无'
+
+                # 获取主演
+                actor_match = re.search(pattern2, item_o)
+                actor = actor_match.group(1) if actor_match else '无'
+
+                # 获取年份
+                year_match = re.search(pattern3, item_o)
+                year = year_match.group(1) if year_match else '无'
+
+                # 获取制片国家
+                country_match = re.search(pattern4, item_o)
+                country = country_match.group(1) if country_match else None
+
+                # 获取类型
+                genres_match = re.findall(pattern5, item_o)
+                genre = genres_match[-1].replace("&nbsp;", "") if genres_match else ''
+
+                movie = {'rank': start + i + 1, 'name': name, 'director': director, 'actor': actor, 'year': year,
+                         'country': country, 'genre': genre, 'rating': rating, 'inq': inq}
+
+                movies.append(movie)
+            pbar.update(1)
+
+        except Exception as e:
+            # 记录错误信息到日志文件
+            logging.exception(f"Error occurred while processing URL: {url}")
+            sys.exit()
+
+# 将电影信息写入CSV文件
+with open('movies.csv', 'w', newline='', encoding='utf-8') as csvfile:
+    fieldnames = ['Top', '电影名称', '导演', '主演', '上映年份', '制片国家', '类型', '评分', '影评']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    for movie in movies:
+        writer.writerow(
+            {'Top': movie['rank'], '电影名称': movie['name'], '导演': movie['director'], '主演': movie['actor'],
+             '上映年份': movie['year'], '制片国家': movie['country'].strip(), '类型': movie['genre'].strip(),
+             '评分': movie['rating'],
+             '影评': movie['inq']})
+print("电影信息已保存到movies.csv文件中。")
+logging.info("电影信息已保存到movies.csv文件中。")
+
+df = pd.read_csv("movies.csv")
+
+# 将 DataFrame 转换为 Excel 文件
+df.to_excel("movies.xlsx", index=False)
+
+print("保存成功")
+logging.info("保存成功")
